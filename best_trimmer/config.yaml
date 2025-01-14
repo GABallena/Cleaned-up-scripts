@@ -1,0 +1,48 @@
+# Input and output directories
+input_dir: "input_data"
+output_dir: "output_data"
+
+# Number of random iterations to try
+iterations: 5
+
+# Tool-specific parameters ranges
+trimmomatic:
+  minlen: [30, 50]
+  sliding_window: [4, 10]
+  quality: [15, 30]
+
+fastp:
+  quality_cut: [20, 30]
+  length_cut: [30, 50]
+  n_base_limit: [0, 10]
+
+cutadapt:
+  error_rate: [0.1, 0.2]
+  minimum_length: [25, 40]
+  overlap: [3, 10]
+
+bbduk:
+  ktrim: ["r", "l"]
+  k: [19, 27]
+  mink: [8, 12]
+  hdist: [0, 2]
+  minlen: [30, 50]
+  qtrim: ["rl", "f", "r", "l"]
+  trimq: [10, 20]
+  minkmerhits: [1, 2]
+  minkmerfraction: [0.0, 0.5]
+
+sickle:
+  quality_threshold: [20, 30]
+  length_threshold: [25, 50]
+
+# Scoring weights for optimization
+weights:
+  quality_gain: 0.4
+  entropy_loss: 0.3
+  richness_loss: 0.3
+
+# Resource requirements
+resources:
+  threads: 4
+  memory_mb: 8000
