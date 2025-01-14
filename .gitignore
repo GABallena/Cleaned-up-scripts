@@ -1,0 +1,40 @@
+# Ignore everything
+*
+# folders 
+!configs/
+!envs/
+!envs/*.yaml
+!configs/*.yaml
+!scripts/
+!scripts/*
+
+
+# Don't ignore .gitignore itself
+!.gitignore
+
+# Unignore specific file types and directories
+!*.bash
+!*.py
+!*.pl
+!*.smk
+!*.yaml
+!*.R
+!*.tex
+!*.gitignore
+!*.md
+!*.ini
+!*.txt
+!*.json
+!*.yml
+!*.docker
+!*.pm
+!*.html
+!*Snakefile
+!*Dockerfile
+!*.csv
+!*.tsv
+!*.js
+!*.cpp
+!*.hpp
+!*.php
+
