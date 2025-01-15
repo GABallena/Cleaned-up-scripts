@@ -67,89 +67,102 @@ def random_sickle_parameters(iteration, sample):
     
     return generated_parameters[param_key]
 
-def run_trimmomatic(input_file, output_file, iterations):
-    for i in range(iterations):
-        params = random_trimmomatic_parameters(i, os.path.basename(input_file))
-        command = [
-            'trimmomatic', 'PE', '-phred33',
-            input_file, input_file.replace('_R1_', '_R2_'),
-            output_file + f'_paired_{i}_R1.fastq', output_file + f'_unpaired_{i}_R1.fastq',
-            output_file + f'_paired_{i}_R2.fastq', output_file + f'_unpaired_{i}_R2.fastq',
-            f'adapters.fa:{params[0]}:{params[1]}:{params[2]}',
-            f'LEADING:{params[3]}', f'TRAILING:{params[4]}',
-            f'SLIDINGWINDOW:{params[5]}:{params[6]}', f'MINLEN:{params[7]}'
-        ]
-        print(f"Running iteration {i+1} with parameters: {params}")
-        subprocess.run(command)
+def process_directory(input_dir, output_dir, iterations, log_file):
+    with open(log_file, 'w') as f:
+        f.write("Tool\tIteration\tSample\tParameters\n")
+        f.flush()  # Ensure header is written immediately
+        for file in os.listdir(input_dir):
+            if file.endswith('_1.fastq.gz'):
+                input_file_1 = os.path.join(input_dir, file)
+                input_file_2 = input_file_1.replace('_1.fastq.gz', '_2.fastq.gz')
+                output_file_base = os.path.join(output_dir, os.path.splitext(file)[0].replace('_1', ''))
+                for i in range(iterations):
+                    sample = os.path.basename(input_file_1)
+                    
+                    # Run Trimmomatic
+                    params = random_trimmomatic_parameters(i, sample)
+                    f.write(f"Trimmomatic\t{i}\t{sample}\t{params}\n")
+                    f.flush()  # Ensure log is written immediately
+                    command = [
+                        'trimmomatic', 'PE', '-phred33',
+                        input_file_1, input_file_2,
+                        output_file_base + f'_trimmomatic_{i}_paired_R1.fastq', output_file_base + f'_trimmomatic_{i}_unpaired_R1.fastq',
+                        output_file_base + f'_trimmomatic_{i}_paired_R2.fastq', output_file_base + f'_trimmomatic_{i}_unpaired_R2.fastq',
+                        'ILLUMINACLIP:adapters.fa:{0}:{1}:{2}'.format(params[0], params[1], params[2]),
+                        f'LEADING:{params[3]}', f'TRAILING:{params[4]}',
+                        f'SLIDINGWINDOW:{params[5]}:{params[6]}', f'MINLEN:{params[7]}'
+                    ]
+                    print(f"Running Trimmomatic iteration {i+1} with parameters: {params}")
+                    subprocess.run(command)
+                    
+                    # Run Cutadapt
+                    params = random_cutadapt_parameters(i, sample)
+                    f.write(f"Cutadapt\t{i}\t{sample}\t{params}\n")
+                    f.flush()  # Ensure log is written immediately
+                    command = [
+                        'cutadapt',
+                        '-a', params[0], '-A', params[1],
+                        '-m', str(params[3]),
+                        '-q', f'{params[2]}',
+                        '-o', output_file_base + f'_cutadapt_{i}_R1.fastq',
+                        '-p', output_file_base + f'_cutadapt_{i}_R2.fastq',
+                        input_file_1, input_file_2
+                    ]
+                    print(f"Running Cutadapt iteration {i+1} with parameters: {params}")
+                    subprocess.run(command)
 
-def process_directory(input_dir, output_dir, iterations):
-    for file in os.listdir(input_dir):
-        if file.endswith('_1.fastq.gz'):
-            input_file_1 = os.path.join(input_dir, file)
-            input_file_2 = input_file_1.replace('_1.fastq.gz', '_2.fastq.gz')
-            output_file_base = os.path.join(output_dir, os.path.splitext(file)[0].replace('_1', ''))
-            run_trimmomatic(input_file_1, output_file_base, iterations)
-            for i in range(iterations):
-                sample = os.path.basename(input_file_1)
-                params = random_cutadapt_parameters(i, sample)
-                # Run Cutadapt
-                command = [
-                    'cutadapt',
-                    '-a', params[0], '-A', params[1],
-                    '-m', str(params[3]),
-                    '-q', f'{params[2]}',
-                    '-o', output_file_base + f'_cutadapt_{i}_R1.fastq',
-                    '-p', output_file_base + f'_cutadapt_{i}_R2.fastq',
-                    input_file_1, input_file_2
-                ]
-                print(f"Running Cutadapt iteration {i+1} with parameters: {params}")
-                subprocess.run(command)
+                    # Run BBDuk
+                    params = random_bbduk_parameters(i, sample)
+                    f.write(f"BBDuk\t{i}\t{sample}\t{params}\n")
+                    f.flush()  # Ensure log is written immediately
+                    command = [
+                        'bbduk.sh',
+                        f'in1={input_file_1}', f'in2={input_file_2}',
+                        f'out1={output_file_base}_bbduk_{i}_R1.fastq', f'out2={output_file_base}_bbduk_{i}_R2.fastq',
+                        f'ref=adapters.fa', f'ktrim={params[0]}', f'k={params[1]}', f'mink={params[2]}',
+                        f'hdist={params[3]}', f'trimq={params[4]}', f'qtrim={params[5]}',
+                        f'minlen={params[6]}'
+                    ]
+                    print(f"Running BBDuk iteration {i+1} with parameters: {params}")
+                    subprocess.run(command)
 
-                params = random_bbduk_parameters(i, sample)
-                # Run BBDuk
-                command = [
-                    'bbduk.sh',
-                    f'in1={input_file_1}', f'in2={input_file_2}',
-                    f'out1={output_file_base}_bbduk_{i}_R1.fastq', f'out2={output_file_base}_bbduk_{i}_R2.fastq',
-                    f'ref=adapters.fa', f'ktrim={params[0]}', f'k={params[1]}', f'mink={params[2]}',
-                    f'hdist={params[3]}', f'trimq={params[4]}', f'qtrim={params[5]}',
-                    f'minlen={params[6]}'
-                ]
-                print(f"Running BBDuk iteration {i+1} with parameters: {params}")
-                subprocess.run(command)
+                    # Run Fastp
+                    params = random_fastp_parameters(i, sample)
+                    f.write(f"Fastp\t{i}\t{sample}\t{params}\n")
+                    f.flush()  # Ensure log is written immediately
+                    command = [
+                        'fastp',
+                        '-i', input_file_1, '-I', input_file_2,
+                        '-o', output_file_base + f'_fastp_{i}_R1.fastq', '-O', output_file_base + f'_fastp_{i}_R2.fastq',
+                        '--detect_adapter_for_pe', '--trim_front1', str(params[0]), '--trim_tail1', str(params[1]),
+                        '--cut_front', '--cut_tail', '--cut_window_size', str(params[2]), '--cut_mean_quality', str(params[3]),
+                        '--length_required', str(params[4])
+                    ]
+                    print(f"Running Fastp iteration {i+1} with parameters: {params}")
+                    subprocess.run(command)
 
-                params = random_fastp_parameters(i, sample)
-                # Run Fastp
-                command = [
-                    'fastp',
-                    '-i', input_file_1, '-I', input_file_2,
-                    '-o', output_file_base + f'_fastp_{i}_R1.fastq', '-O', output_file_base + f'_fastp_{i}_R2.fastq',
-                    '--detect_adapter_for_pe', '--trim_front1', str(params[0]), '--trim_tail1', str(params[1]),
-                    '--cut_front', '--cut_tail', '--cut_window_size', str(params[2]), '--cut_mean_quality', str(params[3]),
-                    '--length_required', str(params[4])
-                ]
-                print(f"Running Fastp iteration {i+1} with parameters: {params}")
-                subprocess.run(command)
-
-                params = random_sickle_parameters(i, sample)
-                # Run Sickle
-                command = [
-                    'sickle', 'pe',
-                    '-f', input_file_1, '-r', input_file_2,
-                    '-t', 'sanger',
-                    '-o', output_file_base + f'_sickle_{i}_R1.fastq', '-p', output_file_base + f'_sickle_{i}_R2.fastq',
-                    '-s', output_file_base + f'_sickle_{i}_singles.fastq',
-                    '-q', str(params[0]), '-l', str(params[1])
-                ]
-                print(f"Running Sickle iteration {i+1} with parameters: {params}")
-                subprocess.run(command)
+                    # Run Sickle
+                    params = random_sickle_parameters(i, sample)
+                    f.write(f"Sickle\t{i}\t{sample}\t{params}\n")
+                    f.flush()  # Ensure log is written immediately
+                    command = [
+                        'sickle', 'pe',
+                        '-f', input_file_1, '-r', input_file_2,
+                        '-t', 'sanger',
+                        '-o', output_file_base + f'_sickle_{i}_R1.fastq', '-p', output_file_base + f'_sickle_{i}_R2.fastq',
+                        '-s', output_file_base + f'_sickle_{i}_singles.fastq',
+                        '-q', str(params[0]), '-l', str(params[1])
+                    ]
+                    print(f"Running Sickle iteration {i+1} with parameters: {params}")
+                    subprocess.run(command)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process paired-end reads with various trimming tools.')
     parser.add_argument('-i', '--input_dir', type=str, required=True, help='Directory containing input paired-end reads')
     parser.add_argument('-o', '--output_dir', type=str, required=True, help='Directory to save output files')
     parser.add_argument('-n', '--iterations', type=int, default=10, help='Number of iterations to run for each tool')
+    parser.add_argument('-l', '--log_file', type=str, required=True, help='File to log the parameters used')
     
     args = parser.parse_args()
     
-    process_directory(args.input_dir, args.output_dir, args.iterations)
+    process_directory(args.input_dir, args.output_dir, args.iterations, args.log_file)
