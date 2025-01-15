@@ -145,9 +145,17 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     params = random_sickle_parameters(i, sample)
                     f.write(f"Sickle\t{i}\t{sample}\t{params}\n")
                     f.flush()  # Ensure log is written immediately
+                    # Create temporary directory for fastq files
+                    temp_dir = os.path.join(output_dir, 'temp_fastq')
+                    os.makedirs(temp_dir, exist_ok=True)
+                    input_file_1_fastq = os.path.join(temp_dir, os.path.basename(input_file_1).replace('.fastq.gz', '.fastq'))
+                    input_file_2_fastq = os.path.join(temp_dir, os.path.basename(input_file_2).replace('.fastq.gz', '.fastq'))
+                    # Stream the outputs
+                    subprocess.run(f'gunzip -c {input_file_1} > {input_file_1_fastq}', shell=True)
+                    subprocess.run(f'gunzip -c {input_file_2} > {input_file_2_fastq}', shell=True)
                     command = [
                         'sickle', 'pe',
-                        '-f', input_file_1, '-r', input_file_2,
+                        '-f', input_file_1_fastq, '-r', input_file_2_fastq,
                         '-t', 'sanger',
                         '-o', output_file_base + f'_sickle_{i}_R1.fastq', '-p', output_file_base + f'_sickle_{i}_R2.fastq',
                         '-s', output_file_base + f'_sickle_{i}_singles.fastq',
@@ -155,6 +163,10 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     ]
                     print(f"Running Sickle iteration {i+1} with parameters: {params}")
                     subprocess.run(command)
+                    # Remove temporary fastq files
+                    os.remove(input_file_1_fastq)
+                    os.remove(input_file_2_fastq)
+                    os.rmdir(temp_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process paired-end reads with various trimming tools.')

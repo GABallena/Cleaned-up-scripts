@@ -3,8 +3,8 @@ from pathlib import Path
 import shutil
 
 def rename_sample_folders(base_path='CAMISIM/out'):
-    # Create raw_reads directory if it doesn't exist
-    raw_reads_dir = os.path.join(os.path.dirname(base_path), 'raw_reads')
+    # Create raw_reads directory outside of CAMISIM directory
+    raw_reads_dir = os.path.join(os.path.dirname(os.path.dirname(base_path)), 'raw_reads')
     os.makedirs(raw_reads_dir, exist_ok=True)
     
     # Get all directories in the base path
