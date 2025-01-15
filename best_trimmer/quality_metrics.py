@@ -1,210 +1,180 @@
-import numpy as np
-from scipy.stats import entropy
 from Bio import SeqIO
-from Bio.SeqUtils import gc_fraction  # Updated import
-import glob
+from Bio.SeqUtils import gc_fraction
 import os
-from collections import Counter
-from itertools import product
-import statistics
-import gzip
+import numpy as np
+import math
+import csv
+import argparse
 
-def calculate_entropy(sequence):
-    """Calculate Shannon entropy of a sequence."""
-    _, counts = np.unique(list(sequence), return_counts=True)
-    return entropy(counts)
+def calculate_shannon_entropy(sequence):
+    """Calculate the Shannon entropy of a sequence."""
+    bases = ['A', 'C', 'G', 'T']
+    entropy = 0
+    for base in bases:
+        p = sequence.count(base) / len(sequence)
+        if p > 0:
+            entropy -= p * math.log2(p)
+    return entropy
 
-def calculate_quality_score(fastq_file):
-    """Calculate quality metrics for a FASTQ file (handles gzipped files)"""
-    quality_scores = []
-    try:
-        # Open gzipped files
-        if str(fastq_file).endswith('.gz'):
-            with gzip.open(fastq_file, 'rt') as handle:
-                for record in SeqIO.parse(handle, "fastq"):
-                    quality_scores.append(sum(record.letter_annotations["phred_quality"]) / len(record.seq))
-        # Open regular files
-        else:
-            with open(fastq_file, 'r') as handle:
-                for record in SeqIO.parse(handle, "fastq"):
-                    quality_scores.append(sum(record.letter_annotations["phred_quality"]) / len(record.seq))
-    except Exception as e:
-        print(f"Error processing {fastq_file}: {str(e)}")
-        raise
+def calculate_n_content(sequence):
+    """Calculate the N content of a sequence."""
+    return sequence.count('N') / len(sequence)
 
+def calculate_base_composition(records):
+    """Calculate base composition per position."""
+    base_counts = {'A': [], 'C': [], 'G': [], 'T': [], 'N': []}
+    for record in records:
+        for i, base in enumerate(record.seq):
+            if len(base_counts['A']) <= i:
+                for key in base_counts:
+                    base_counts[key].append(0)
+            base_counts[base][i] += 1
+    return base_counts
+
+def calculate_per_sequence_gc_content(sequence):
+    """Calculate the GC content for a sequence."""
+    return gc_fraction(sequence)
+
+def calculate_per_base_n_content(records):
+    """Calculate the proportion of 'N' bases at each position."""
+    n_content = []
+    for record in records:
+        for i, base in enumerate(record.seq):
+            if len(n_content) <= i:
+                n_content.append(0)
+            if base == 'N':
+                n_content[i] += 1
+    return [count / len(records) for count in n_content]
+
+def calculate_per_sequence_n_content(sequence):
+    """Calculate the proportion of 'N' bases in a sequence."""
+    return sequence.count('N') / len(sequence)
+
+def identify_overrepresented_sequences(sequence_counts, threshold=0.01):
+    """Identify sequences that are overrepresented in the dataset."""
+    total_sequences = sum(sequence_counts.values())
+    return {seq: count for seq, count in sequence_counts.items() if count / total_sequences > threshold}
+
+def detect_adapter_content(sequence, adapters):
+    """Detect and quantify the presence of adapter sequences."""
+    adapter_counts = {adapter: 0 for adapter in adapters}
+    for adapter in adapters:
+        adapter_counts[adapter] += sequence.count(adapter)
+    return adapter_counts
+
+def calculate_base_percentages(sequence):
+    """Calculate the percentages of A, C, G, and T in a sequence."""
+    length = len(sequence)
     return {
-        'quality_scores': quality_scores,
-        'avg_quality': sum(quality_scores) / len(quality_scores) if quality_scores else 0
+        'A': (sequence.count('A') / length) * 100,
+        'C': (sequence.count('C') / length) * 100,
+        'G': (sequence.count('G') / length) * 100,
+        'T': (sequence.count('T') / length) * 100
     }
 
-def calculate_gc_content(sequence):
-    """Calculate GC content of a sequence."""
-    return gc_fraction(sequence) * 100  # Updated GC calculation
+def calculate_at_content(sequence):
+    """Calculate the AT content of a sequence."""
+    return (sequence.count('A') + sequence.count('T')) / len(sequence)
 
 def calculate_sequence_complexity(sequence):
-    """Calculate linguistic sequence complexity."""
-    total_kmers = len(sequence)
-    unique_kmers = len(set(sequence[i:i+3] for i in range(len(sequence)-2)))
-    return unique_kmers / total_kmers if total_kmers > 0 else 0
+    """Calculate the complexity of a sequence."""
+    return len(set(sequence)) / len(sequence)
 
-def calculate_n50(lengths):
-    """Calculate N50 of sequence lengths."""
-    sorted_lengths = sorted(lengths, reverse=True)
-    total = sum(sorted_lengths)
-    running_sum = 0
-    for length in sorted_lengths:
-        running_sum += length
-        if running_sum >= total/2:
-            return length
-    return 0
+def calculate_dinucleotide_frequencies(sequence):
+    """Calculate the frequencies of dinucleotides in a sequence."""
+    dinucleotides = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    frequencies = {dinucleotide: 0 for dinucleotide in dinucleotides}
+    for i in range(len(sequence) - 1):
+        dinucleotide = sequence[i:i+2]
+        if dinucleotide in frequencies:
+            frequencies[dinucleotide] += 1
+    total_dinucleotides = len(sequence) - 1
+    return {dinucleotide: count / total_dinucleotides for dinucleotide, count in frequencies.items()}
 
-def calculate_dinucleotide_freq(sequence):
-    """Calculate dinucleotide frequencies."""
-    if len(sequence) < 2:
-        return 0
-    dinucs = [''.join(p) for p in product('ATGC', repeat=2)]
-    freq = Counter([sequence[i:i+2] for i in range(len(sequence)-1)])
-    return sum(abs(freq[d]/sum(freq.values()) - 0.0625) for d in dinucs)
+def process_fasta(file_path, adapters=[]):
+    """Process a FASTA file and gather quality metrics."""
+    metrics_list = []
 
-def calculate_quality_distribution(record):
-    """Analyze quality score distribution."""
-    quals = record.letter_annotations["phred_quality"]
-    return {
-        'mean': statistics.mean(quals),
-        'std': statistics.stdev(quals) if len(quals) > 1 else 0,
-        'median': statistics.median(quals),
-        'q1': np.percentile(quals, 25),
-        'q3': np.percentile(quals, 75)
-    }
+    try:
+        with open(file_path, "rt") as handle:
+            records = list(SeqIO.parse(handle, "fasta"))
+    except Exception as e:
+        print(f"Error processing file {file_path}: {e}")
+        return []
 
-def calculate_base_balance(sequence):
-    """Calculate base composition balance."""
-    counts = Counter(sequence)
-    total = sum(counts.values())
-    expected = total/4  # Expected count for perfect balance
-    return 1 - sum(abs(counts[base]/total - 0.25) for base in 'ATGC')/2
+    print(f"Number of records in {file_path}: {len(records)}")  # Debug print
+    if len(records) > 0:
+        print(f"First record in {file_path}: {records[0].format('fasta')}")  # Debug print
 
-def calculate_extended_biological_metrics(record):
-    """Calculate comprehensive biological metrics."""
-    sequence = str(record.seq)
-    qual_dist = calculate_quality_distribution(record)
-    
-    metrics = {
-        'gc_content': calculate_gc_content(sequence),
-        'complexity': calculate_sequence_complexity(sequence),
-        'length': len(sequence),
-        'dinuc_bias': calculate_dinucleotide_freq(sequence),
-        'base_balance': calculate_base_balance(sequence),
-        'quality_mean': qual_dist['mean'],
-        'quality_std': qual_dist['std'],
-        'quality_consistency': 1 - (qual_dist['std'] / qual_dist['mean'] if qual_dist['mean'] > 0 else 1)
-    }
-    return metrics
-
-def parse_trim_results(results_dir):
-    """Parse trim_randomizer outputs with extended metrics."""
-    results = []
-    for output_file in glob.glob(os.path.join(results_dir, "*.fastq")):
-        params = os.path.basename(output_file).split('_')
-        
-        # Initialize aggregate metrics
-        metrics_sum = {
-            'entropy': 0,
-            'gc_content': 0,
-            'complexity': 0,
-            'dinuc_bias': 0,
-            'base_balance': 0,
-            'quality_mean': 0,
-            'quality_consistency': 0
+    for record in records:
+        seq_str = str(record.seq)
+        metrics = {
+            "entropy": calculate_shannon_entropy(seq_str),
+            "gc_content": calculate_per_sequence_gc_content(record.seq),
+            "at_content": calculate_at_content(seq_str),
+            "sequence_length": len(record.seq),
+            "n_content": calculate_per_sequence_n_content(seq_str),
+            "n_percentage": calculate_n_content(seq_str) * 100,
+            "base_percentages": calculate_base_percentages(seq_str),
+            "sequence_complexity": calculate_sequence_complexity(seq_str),
+            "dinucleotide_frequencies": calculate_dinucleotide_frequencies(seq_str),
+            "adapter_content": detect_adapter_content(seq_str, adapters)
         }
-        lengths = []
-        read_count = 0
-        
-        reads = list(SeqIO.parse(output_file, "fastq"))
-        for record in reads:
-            bio_metrics = calculate_extended_biological_metrics(record)
-            metrics_sum['entropy'] += calculate_entropy(str(record.seq))
-            lengths.append(len(record.seq))
-            
-            for key in ['gc_content', 'complexity', 'dinuc_bias', 
-                       'base_balance', 'quality_mean', 'quality_consistency']:
-                metrics_sum[key] += bio_metrics[key] if key in bio_metrics else 0
-            
-            read_count += 1
-            
-        # Calculate averages
-        if read_count > 0:
-            for key in metrics_sum:
-                metrics_sum[key] /= read_count
-                
-        metrics_sum['n50'] = calculate_n50(lengths)
-        
-        results.append({
-            'file': output_file,
-            'params': params,
-            **metrics_sum
-        })
-    
-    return results
+        metrics_list.append((record.id, metrics))
 
-def find_optimal_trim(results_dir, weights=None):
-    """Find optimal parameters with extended metrics."""
-    if weights is None:
-        weights = {
-            'entropy': 0.15,
-            'gc_content': 0.15,
-            'complexity': 0.15,
-            'dinuc_bias': 0.1,
-            'base_balance': 0.15,
-            'quality_mean': 0.15,
-            'quality_consistency': 0.1,
-            'n50': 0.05
-        }
-    
-    results = parse_trim_results(results_dir)
-    
-    # Normalize scores
-    max_scores = {
-        metric: max(r[metric] for r in results)
-        for metric in ['entropy', 'gc_content', 'complexity', 'dinuc_bias', 'base_balance', 'quality_mean', 'quality_consistency', 'n50']
-    }
-    
-    for r in results:
-        r['total_score'] = sum(
-            weights[metric] * (r[metric] / max_scores[metric])
-            for metric in weights.keys()
-        )
-    
-    return max(results, key=lambda x: x['total_score'])
+    return metrics_list
+
+def write_metrics_to_csv(metrics_list, output_file, sample_name):
+    """Write the metrics to a CSV file."""
+    file_exists = os.path.isfile(output_file)
+    with open(output_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            header = [
+                "Sample Name", "Read ID", "Entropy", "GC Content", 
+                "AT Content", "Sequence Length", "N Content", "N Percentage", 
+                "Base Percentages", "Sequence Complexity", "Dinucleotide Frequencies", 
+                "Adapter Content"
+            ]
+            writer.writerow(header)
+        for read_id, metrics in metrics_list:
+            print(f"Writing data for {sample_name}, read {read_id}: {metrics}")  # Debug print
+            writer.writerow([
+                sample_name, read_id, metrics['entropy'], metrics['gc_content'], 
+                metrics['at_content'], metrics['sequence_length'], metrics['n_content'], 
+                metrics['n_percentage'], metrics['base_percentages'], 
+                metrics['sequence_complexity'], metrics['dinucleotide_frequencies'], 
+                metrics['adapter_content']
+            ])
+
+def read_adapters(adapter_file):
+    """Read adapter sequences from a file."""
+    adapters = []
+    with open(adapter_file, 'r') as file:
+        for line in file:
+            if not line.startswith('>'):
+                adapters.append(line.strip())
+    return adapters
+
+def main(input_directory, adapter_file):
+    """Main function to process all FASTA files in a directory."""
+    output_file = "read_metrics.csv"  # Hardcoded output file name
+    adapters = read_adapters(adapter_file)
+    print(f"Adapters: {adapters}")  # Debug print
+    for filename in os.listdir(input_directory):
+        if filename.endswith(".fasta") or filename.endswith(".fa"):
+            file_path = os.path.join(input_directory, filename)
+            print(f"Processing file: {file_path}")  # Debug print
+            metrics_list = process_fasta(file_path, adapters)
+            print(f"Results for {filename}: {metrics_list}")  # Debug print
+            write_metrics_to_csv(metrics_list, output_file, filename)
+            print(f"Metrics for {filename} have been written to {output_file}")  # Debug print
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Find optimal trimming parameters')
-    parser.add_argument('results_dir', help='Directory containing trim_randomizer outputs')
-    parser.add_argument('--weights', type=str, default=None,
-                       help='Comma-separated weights for metrics (entropy,gc,complexity,dinuc,balance,qual_mean,qual_cons,n50)')
+    parser = argparse.ArgumentParser(description="Process FASTA files and gather quality metrics.")
+    parser.add_argument("-i", "--input", required=True, help="Input directory containing FASTA files")
+    parser.add_argument("-a", "--adapters", required=True, help="File containing adapter sequences")
     
     args = parser.parse_args()
-    
-    weights = None
-    if args.weights:
-        weight_values = [float(x) for x in args.weights.split(',')]
-        weights = {
-            'entropy': weight_values[0],
-            'gc_content': weight_values[1],
-            'complexity': weight_values[2],
-            'dinuc_bias': weight_values[3],
-            'base_balance': weight_values[4],
-            'quality_mean': weight_values[5],
-            'quality_consistency': weight_values[6],
-            'n50': weight_values[7]
-        }
-    
-    best = find_optimal_trim(args.results_dir, weights)
-    
-    print(f"Best trimming parameters found:")
-    print(f"File: {best['file']}")
-    print(f"Parameters: {best['params']}")
-    for metric in ['entropy', 'gc_content', 'complexity', 'dinuc_bias', 'base_balance', 'quality_mean', 'quality_consistency', 'n50', 'total_score']:
-        print(f"{metric.replace('_', ' ').title()}: {best[metric]:.3f}")
+    main(args.input, args.adapters)
+    print("Metrics have been written to read_metrics.csv")
