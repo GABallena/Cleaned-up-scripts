@@ -39,3 +39,4 @@
 !*.hpp
 !*.php
 
+best_trimmer/read_metrics.csv

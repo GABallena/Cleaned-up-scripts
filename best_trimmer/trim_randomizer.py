@@ -34,8 +34,8 @@ def random_fastp_parameters(iteration, sample):
     return generated_parameters[param_key]
 
 def random_cutadapt_parameters(iteration, sample):
-    adapter_fwd = 'ADAPTER_FWD'
-    adapter_rev = 'ADAPTER_REV'
+    adapter_fwd = 'AGATCGGAAGAGCACACGTCTGAACTCCAGTCA'
+    adapter_rev = 'AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT'
     minlen = random.randint(36, 100)
     quality = random.randint(15, 30)
     
@@ -67,6 +67,14 @@ def random_sickle_parameters(iteration, sample):
     
     return generated_parameters[param_key]
 
+def remove_singles_and_unpaired(output_dir):
+    """Remove all singles and unpaired samples from the output directory."""
+    for file in os.listdir(output_dir):
+        if 'singles' in file or 'unpaired' in file:
+            file_path = os.path.join(output_dir, file)
+            print(f"Removing file: {file_path}")  # Debug print
+            os.remove(file_path)
+
 def process_directory(input_dir, output_dir, iterations, log_file):
     with open(log_file, 'w') as f:
         f.write("Tool\tIteration\tSample\tParameters\n")
@@ -75,7 +83,7 @@ def process_directory(input_dir, output_dir, iterations, log_file):
             if file.endswith('_1.fastq.gz'):
                 input_file_1 = os.path.join(input_dir, file)
                 input_file_2 = input_file_1.replace('_1.fastq.gz', '_2.fastq.gz')
-                output_file_base = os.path.join(output_dir, os.path.splitext(file)[0].replace('_1', ''))
+                sample_base = os.path.splitext(file)[0].replace('_1', '')
                 for i in range(iterations):
                     sample = os.path.basename(input_file_1)
                     
@@ -86,8 +94,10 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     command = [
                         'trimmomatic', 'PE', '-phred33',
                         input_file_1, input_file_2,
-                        output_file_base + f'_trimmomatic_{i}_paired_R1.fastq', output_file_base + f'_trimmomatic_{i}_unpaired_R1.fastq',
-                        output_file_base + f'_trimmomatic_{i}_paired_R2.fastq', output_file_base + f'_trimmomatic_{i}_unpaired_R2.fastq',
+                        os.path.join(output_dir, f'{sample_base}_trimmomatic_{i}_paired_R1.fastq'), 
+                        os.path.join(output_dir, f'{sample_base}_trimmomatic_{i}_unpaired_R1.fastq'),
+                        os.path.join(output_dir, f'{sample_base}_trimmomatic_{i}_paired_R2.fastq'), 
+                        os.path.join(output_dir, f'{sample_base}_trimmomatic_{i}_unpaired_R2.fastq'),
                         'ILLUMINACLIP:adapters.fa:{0}:{1}:{2}'.format(params[0], params[1], params[2]),
                         f'LEADING:{params[3]}', f'TRAILING:{params[4]}',
                         f'SLIDINGWINDOW:{params[5]}:{params[6]}', f'MINLEN:{params[7]}'
@@ -104,8 +114,8 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                         '-a', params[0], '-A', params[1],
                         '-m', str(params[3]),
                         '-q', f'{params[2]}',
-                        '-o', output_file_base + f'_cutadapt_{i}_R1.fastq',
-                        '-p', output_file_base + f'_cutadapt_{i}_R2.fastq',
+                        '-o', os.path.join(output_dir, f'{sample_base}_cutadapt_{i}_R1.fastq'),
+                        '-p', os.path.join(output_dir, f'{sample_base}_cutadapt_{i}_R2.fastq'),
                         input_file_1, input_file_2
                     ]
                     print(f"Running Cutadapt iteration {i+1} with parameters: {params}")
@@ -118,7 +128,8 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     command = [
                         'bbduk.sh',
                         f'in1={input_file_1}', f'in2={input_file_2}',
-                        f'out1={output_file_base}_bbduk_{i}_R1.fastq', f'out2={output_file_base}_bbduk_{i}_R2.fastq',
+                        f'out1={os.path.join(output_dir, f"{sample_base}_bbduk_{i}_R1.fastq")}', 
+                        f'out2={os.path.join(output_dir, f"{sample_base}_bbduk_{i}_R2.fastq")}',
                         f'ref=adapters.fa', f'ktrim={params[0]}', f'k={params[1]}', f'mink={params[2]}',
                         f'hdist={params[3]}', f'trimq={params[4]}', f'qtrim={params[5]}',
                         f'minlen={params[6]}'
@@ -133,7 +144,8 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     command = [
                         'fastp',
                         '-i', input_file_1, '-I', input_file_2,
-                        '-o', output_file_base + f'_fastp_{i}_R1.fastq', '-O', output_file_base + f'_fastp_{i}_R2.fastq',
+                        '-o', os.path.join(output_dir, f'{sample_base}_fastp_{i}_R1.fastq'), 
+                        '-O', os.path.join(output_dir, f'{sample_base}_fastp_{i}_R2.fastq'),
                         '--detect_adapter_for_pe', '--trim_front1', str(params[0]), '--trim_tail1', str(params[1]),
                         '--cut_front', '--cut_tail', '--cut_window_size', str(params[2]), '--cut_mean_quality', str(params[3]),
                         '--length_required', str(params[4])
@@ -157,8 +169,9 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                         'sickle', 'pe',
                         '-f', input_file_1_fastq, '-r', input_file_2_fastq,
                         '-t', 'sanger',
-                        '-o', output_file_base + f'_sickle_{i}_R1.fastq', '-p', output_file_base + f'_sickle_{i}_R2.fastq',
-                        '-s', output_file_base + f'_sickle_{i}_singles.fastq',
+                        '-o', os.path.join(output_dir, f'{sample_base}_sickle_{i}_R1.fastq'), 
+                        '-p', os.path.join(output_dir, f'{sample_base}_sickle_{i}_R2.fastq'),
+                        '-s', os.path.join(output_dir, f'{sample_base}_sickle_{i}_singles.fastq'),
                         '-q', str(params[0]), '-l', str(params[1])
                     ]
                     print(f"Running Sickle iteration {i+1} with parameters: {params}")
@@ -167,6 +180,9 @@ def process_directory(input_dir, output_dir, iterations, log_file):
                     os.remove(input_file_1_fastq)
                     os.remove(input_file_2_fastq)
                     os.rmdir(temp_dir)
+    
+    # Remove singles and unpaired files after processing
+    remove_singles_and_unpaired(output_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process paired-end reads with various trimming tools.')

@@ -127,9 +127,9 @@ def process_fasta(file_path, adapters=[]):
 def write_metrics_to_csv(metrics_list, output_file, sample_name):
     """Write the metrics to a CSV file."""
     file_exists = os.path.isfile(output_file)
-    with open(output_file, mode='a', newline='') as file:
-        writer = csv.writer(file)
-        if not file_exists:
+    if not file_exists:
+        with open(output_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
             header = [
                 "Sample Name", "Read ID", "Entropy", "GC Content", 
                 "AT Content", "Sequence Length", "N Content", "N Percentage", 
@@ -137,6 +137,8 @@ def write_metrics_to_csv(metrics_list, output_file, sample_name):
                 "Adapter Content"
             ]
             writer.writerow(header)
+    with open(output_file, mode='a', newline='') as file:
+        writer = csv.writer(file)
         for read_id, metrics in metrics_list:
             print(f"Writing data for {sample_name}, read {read_id}: {metrics}")  # Debug print
             writer.writerow([
@@ -159,12 +161,28 @@ def read_adapters(adapter_file):
 def main(input_directory, adapter_file):
     """Main function to process all FASTA files in a directory."""
     output_file = "read_metrics.csv"  # Hardcoded output file name
+    # Ensure the output file is created if it doesn't exist
+    if not os.path.isfile(output_file):
+        with open(output_file, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            header = [
+                "Sample Name", "Read ID", "Entropy", "GC Content", 
+                "AT Content", "Sequence Length", "N Content", "N Percentage", 
+                "Base Percentages", "Sequence Complexity", "Dinucleotide Frequencies", 
+                "Adapter Content"
+            ]
+            writer.writerow(header)
+    
     adapters = read_adapters(adapter_file)
     print(f"Adapters: {adapters}")  # Debug print
     for filename in os.listdir(input_directory):
-        if filename.endswith(".fasta") or filename.endswith(".fa"):
+        # Skip FASTQ files and only process FASTA files
+        if filename.endswith(('.fastq', '.fq')):
+            print(f"Skipping FASTQ file: {filename}")
+            continue
+        if filename.endswith(('.fasta', '.fa')):
             file_path = os.path.join(input_directory, filename)
-            print(f"Processing file: {file_path}")  # Debug print
+            print(f"Processing FASTA file: {file_path}")  # Debug print
             metrics_list = process_fasta(file_path, adapters)
             print(f"Results for {filename}: {metrics_list}")  # Debug print
             write_metrics_to_csv(metrics_list, output_file, filename)
