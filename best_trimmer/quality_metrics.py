@@ -5,6 +5,9 @@ import numpy as np
 import math
 import csv
 import argparse
+import subprocess
+import shutil
+import tempfile
 
 def calculate_shannon_entropy(sequence):
     """Calculate the Shannon entropy of a sequence."""
@@ -158,9 +161,27 @@ def read_adapters(adapter_file):
                 adapters.append(line.strip())
     return adapters
 
+def check_seqtk_installed():
+    """Check if seqtk is installed and accessible."""
+    if shutil.which('seqtk') is None:
+        raise RuntimeError("seqtk is not installed or not in PATH. Please install seqtk first.")
+
+def convert_fastq_to_fasta(fastq_file):
+    """Convert FASTQ to FASTA using seqtk."""
+    temp_fasta = tempfile.NamedTemporaryFile(suffix='.fasta', delete=False)
+    try:
+        subprocess.run(['seqtk', 'seq', '-A', fastq_file], stdout=temp_fasta, check=True)
+        return temp_fasta.name
+    except subprocess.CalledProcessError as e:
+        print(f"Error converting {fastq_file} to FASTA: {e}")
+        return None
+
 def main(input_directory, adapter_file):
-    """Main function to process all FASTA files in a directory."""
-    output_file = "read_metrics.csv"  # Hardcoded output file name
+    """Main function to process all FASTA/FASTQ files in a directory."""
+    check_seqtk_installed()
+    output_file = "read_metrics.csv"
+    temp_files = []  # Keep track of temporary files
+
     # Ensure the output file is created if it doesn't exist
     if not os.path.isfile(output_file):
         with open(output_file, mode='w', newline='') as file:
@@ -175,18 +196,35 @@ def main(input_directory, adapter_file):
     
     adapters = read_adapters(adapter_file)
     print(f"Adapters: {adapters}")  # Debug print
+
     for filename in os.listdir(input_directory):
-        # Skip FASTQ files and only process FASTA files
+        file_path = os.path.join(input_directory, filename)
+        process_path = file_path
+
+        # Convert FASTQ to FASTA if needed
         if filename.endswith(('.fastq', '.fq')):
-            print(f"Skipping FASTQ file: {filename}")
+            print(f"Converting FASTQ file to FASTA: {filename}")
+            fasta_path = convert_fastq_to_fasta(file_path)
+            if fasta_path:
+                process_path = fasta_path
+                temp_files.append(fasta_path)
+            else:
+                print(f"Skipping {filename} due to conversion error")
+                continue
+        elif not filename.endswith(('.fasta', '.fa')):
             continue
-        if filename.endswith(('.fasta', '.fa')):
-            file_path = os.path.join(input_directory, filename)
-            print(f"Processing FASTA file: {file_path}")  # Debug print
-            metrics_list = process_fasta(file_path, adapters)
-            print(f"Results for {filename}: {metrics_list}")  # Debug print
-            write_metrics_to_csv(metrics_list, output_file, filename)
-            print(f"Metrics for {filename} have been written to {output_file}")  # Debug print
+
+        print(f"Processing file: {process_path}")
+        metrics_list = process_fasta(process_path, adapters)
+        write_metrics_to_csv(metrics_list, output_file, filename)
+        print(f"Metrics for {filename} have been written to {output_file}")
+
+    # Cleanup temporary files
+    for temp_file in temp_files:
+        try:
+            os.unlink(temp_file)
+        except OSError as e:
+            print(f"Error removing temporary file {temp_file}: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process FASTA files and gather quality metrics.")
