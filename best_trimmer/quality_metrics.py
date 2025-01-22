@@ -124,30 +124,62 @@ def process_fasta(file_path, adapters=[]):
 
     return metrics_list
 
-def write_metrics_to_csv(metrics_list, output_file, sample_name):
+def get_header_columns(adapters):
+    """Get the full list of column headers."""
+    BASES = ['A', 'C', 'G', 'T']
+    DINUCS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    
+    header = ["Sample Name", "Read ID", "Tool", "Entropy", "GC Content", 
+             "AT Content", "Sequence Length", "N Content", "N Percentage"]
+    # Add base percentage columns
+    header.extend([f"Base_{base}_Percentage" for base in BASES])
+    # Add sequence complexity
+    header.append("Sequence Complexity")
+    # Add dinucleotide frequency columns
+    header.extend([f"Dinuc_{dinuc}_Freq" for dinuc in DINUCS])
+    # Add adapter content columns
+    header.extend([f"Adapter_{i+1}_Content" for i in range(len(adapters))])
+    return header
+
+def write_metrics_to_csv(metrics_list, output_file, sample_name, adapters):
     """Write the metrics to a CSV file."""
+    TOOLS = ['trimmomatic', 'fastp', 'sickle', 'bbduk', 'cutadapt']
+    BASES = ['A', 'C', 'G', 'T']
+    DINUCS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    
     file_exists = os.path.isfile(output_file)
     if not file_exists:
         with open(output_file, mode='w', newline='') as file:
             writer = csv.writer(file)
-            header = [
-                "Sample Name", "Read ID", "Entropy", "GC Content", 
-                "AT Content", "Sequence Length", "N Content", "N Percentage", 
-                "Base Percentages", "Sequence Complexity", "Dinucleotide Frequencies", 
-                "Adapter Content"
-            ]
-            writer.writerow(header)
+            writer.writerow(get_header_columns(adapters))
+    
     with open(output_file, mode='a', newline='') as file:
         writer = csv.writer(file)
         for read_id, metrics in metrics_list:
-            print(f"Writing data for {sample_name}, read {read_id}: {metrics}")  # Debug print
-            writer.writerow([
-                sample_name, read_id, metrics['entropy'], metrics['gc_content'], 
-                metrics['at_content'], metrics['sequence_length'], metrics['n_content'], 
-                metrics['n_percentage'], metrics['base_percentages'], 
-                metrics['sequence_complexity'], metrics['dinucleotide_frequencies'], 
-                metrics['adapter_content']
-            ])
+            for tool in TOOLS:
+                row = [
+                    sample_name,
+                    read_id,
+                    tool,
+                    metrics['entropy'],
+                    metrics['gc_content'],
+                    metrics['at_content'],
+                    metrics['sequence_length'],
+                    metrics['n_content'],
+                    metrics['n_percentage']
+                ]
+                # Add base percentages
+                for base in BASES:
+                    row.append(metrics['base_percentages'][base])
+                # Add sequence complexity
+                row.append(metrics['sequence_complexity'])
+                # Add dinucleotide frequencies
+                for dinuc in DINUCS:
+                    row.append(metrics['dinucleotide_frequencies'][dinuc])
+                # Add adapter content
+                for adapter_count in metrics['adapter_content'].values():
+                    row.append(adapter_count)
+                writer.writerow(row)
 
 def read_adapters(adapter_file):
     """Read adapter sequences from a file."""
@@ -160,20 +192,14 @@ def read_adapters(adapter_file):
 
 def main(input_directory, adapter_file):
     """Main function to process all FASTA files in a directory."""
-    output_file = "read_metrics.csv"  # Hardcoded output file name
-    # Ensure the output file is created if it doesn't exist
+    output_file = "read_metrics.csv"
+    adapters = read_adapters(adapter_file)
+    
     if not os.path.isfile(output_file):
         with open(output_file, mode='w', newline='') as file:
             writer = csv.writer(file)
-            header = [
-                "Sample Name", "Read ID", "Entropy", "GC Content", 
-                "AT Content", "Sequence Length", "N Content", "N Percentage", 
-                "Base Percentages", "Sequence Complexity", "Dinucleotide Frequencies", 
-                "Adapter Content"
-            ]
-            writer.writerow(header)
+            writer.writerow(get_header_columns(adapters))
     
-    adapters = read_adapters(adapter_file)
     print(f"Adapters: {adapters}")  # Debug print
     for filename in os.listdir(input_directory):
         # Skip FASTQ files and only process FASTA files
@@ -185,7 +211,7 @@ def main(input_directory, adapter_file):
             print(f"Processing FASTA file: {file_path}")  # Debug print
             metrics_list = process_fasta(file_path, adapters)
             print(f"Results for {filename}: {metrics_list}")  # Debug print
-            write_metrics_to_csv(metrics_list, output_file, filename)
+            write_metrics_to_csv(metrics_list, output_file, filename, adapters)
             print(f"Metrics for {filename} have been written to {output_file}")  # Debug print
 
 if __name__ == "__main__":

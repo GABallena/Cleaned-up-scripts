@@ -1,226 +1,175 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from jinja2 import Template
+import os
 import numpy as np
 from scipy import stats
-import os
-from ast import literal_eval
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
-from sklearn.manifold import TSNE
 
-def load_and_clean_data(file_path):
-    """Load and prepare the data for analysis, with improved error handling."""
-    print(f"Loading data from {file_path}")
-    df = pd.read_csv(file_path)
-    print(f"Loaded {len(df)} rows from CSV")
+class QualityReport:
+    def __init__(self, csv_file):
+        self.df = pd.read_csv(csv_file)
+        self.output_dir = "report_output"
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+    def generate_summary_stats(self):
+        """Generate summary statistics for each metric by tool"""
+        metrics = ['Entropy', 'GC Content', 'Sequence Length', 'N Content']
+        summary = self.df.groupby('Tool')[metrics].agg(['mean', 'std', 'min', 'max'])
+        return summary
     
-    # Debug: Print first few sample names
-    print("First few sample names:")
-    print(df['Sample Name'].head())
-    
-    print("Extracting trimmer names...")
-    
-    def extract_trimmer(sample_name):
-        try:
-            if pd.isna(sample_name) or not isinstance(sample_name, str):
-                return None
-                
-            # Convert to uppercase for case-insensitive matching
-            name_upper = sample_name.upper()
+    def plot_metric_distributions(self):
+        """Create violin plots with jittered points for key metrics across different tools"""
+        metrics = ['Entropy', 'GC Content', 'Sequence Length', 'N Content']
+        figs = []
+        
+        for metric in metrics:
+            plt.figure(figsize=(12, 7))
             
-            # First try direct pattern matching from filename structure
-            if '_' in sample_name:
-                parts = sample_name.split('_')
-                for part in parts:
-                    part_upper = part.upper()
-                    if part_upper in ['BBDUK', 'CUTADAPT', 'FASTP', 'SICKLE', 'TRIMMOMATIC']:
-                        return part_upper
-                    elif 'BB' in part_upper and 'DUK' in part_upper:  # Handle variations of BBDUK
-                        return 'BBDUK'
+            # Create violin plot
+            sns.violinplot(x='Tool', y=metric, data=self.df, 
+                         inner=None, color='lightgray')
             
-            # Fallback to more complex pattern matching if needed
-            trimmer_patterns = {
-                'SICKLE': ['SICKLE'],
-                'FASTP': ['FASTP'],
-                'TRIMMOMATIC': ['TRIMMOMATIC'],
-                'CUTADAPT': ['CUTADAPT'],
-                'BBDUK': ['BBDUK', 'BB_DUK', 'BB-DUK', 'BBDUK']
+            # Add jittered points
+            sns.stripplot(x='Tool', y=metric, data=self.df,
+                        size=4, alpha=0.3, jitter=0.2)
+            
+            plt.xticks(rotation=45)
+            plt.title(f'{metric} Distribution by Tool')
+            plt.xlabel('Tool')
+            plt.ylabel(metric)
+            plt.tight_layout()
+            
+            # Save plot
+            filepath = os.path.join(self.output_dir, f'{metric.lower().replace(" ", "_")}_violin.png')
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            plt.close()
+            figs.append(filepath)
+        
+        return figs
+
+    def analyze_base_composition(self):
+        """Analyze and plot base composition across tools"""
+        base_cols = [col for col in self.df.columns if col.startswith('Base_') and col.endswith('_Percentage')]
+        base_data = self.df.groupby('Tool')[base_cols].mean()
+        
+        plt.figure(figsize=(12, 6))
+        base_data.plot(kind='bar', stacked=True)
+        plt.title('Average Base Composition by Tool')
+        plt.xlabel('Tool')
+        plt.ylabel('Percentage')
+        plt.legend(title='Base', bbox_to_anchor=(1.05, 1))
+        plt.tight_layout()
+        
+        filepath = os.path.join(self.output_dir, 'base_composition.png')
+        plt.savefig(filepath)
+        plt.close()
+        
+        return filepath, base_data
+
+    def statistical_analysis(self):
+        """Perform statistical tests between tools"""
+        results = {}
+        metrics = ['Entropy', 'GC Content', 'Sequence Length', 'N Content']
+        
+        for metric in metrics:
+            # Perform Kruskal-Wallis H-test
+            tools = self.df['Tool'].unique()
+            groups = [self.df[self.df['Tool'] == tool][metric] for tool in tools]
+            h_stat, p_value = stats.kruskal(*groups)
+            
+            results[metric] = {
+                'h_statistic': h_stat,
+                'p_value': p_value,
+                'significant': p_value < 0.05
             }
+        
+        return results
+
+    def generate_html_report(self):
+        """Generate an HTML report with all analyses"""
+        # Get all analysis results
+        summary_stats = self.generate_summary_stats()
+        plot_files = self.plot_metric_distributions()
+        base_plot, base_data = self.analyze_base_composition()
+        stat_results = self.statistical_analysis()
+        
+        # HTML template
+        template_str = """
+        <html>
+        <head>
+            <title>Quality Metrics Report</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                h1, h2 { color: #333; }
+                .plot { margin: 20px 0; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+            </style>
+        </head>
+        <body>
+            <h1>Quality Metrics Report</h1>
             
-            for trimmer, patterns in trimmer_patterns.items():
-                if any(pattern in name_upper for pattern in patterns):
-                    return trimmer
+            <h2>Summary Statistics</h2>
+            {{ summary_stats.to_html() }}
             
-            return None
-        except Exception as e:
-            print(f"Error processing sample name {sample_name}: {str(e)}")
-            return None
-    
-    # Extract trimmer names
-    df['Trimmer'] = df['Sample Name'].apply(extract_trimmer)
-    
-    # Debug: Print unique trimmer names
-    print("\nUnique trimmer names found:")
-    print(df['Trimmer'].value_counts())
-    
-    # Parse dictionary strings
-    print("\nParsing data structures...")
-    try:
-        df['Base Percentages'] = df['Base Percentages'].apply(lambda x: literal_eval(x) if pd.notnull(x) else {})
-        df['Dinucleotide Frequencies'] = df['Dinucleotide Frequencies'].apply(lambda x: literal_eval(x) if pd.notnull(x) else {})
-        df['Adapter Content'] = df['Adapter Content'].apply(lambda x: literal_eval(x) if pd.notnull(x) else {})
-    except Exception as e:
-        print(f"Error parsing dictionaries: {str(e)}")
-        raise
-    
-    # Remove rows with invalid trimmer names
-    df = df.dropna(subset=['Trimmer'])
-    print(f"\nFinal number of valid rows: {len(df)}")
-    
-    return df
-
-def generate_basic_stats(df):
-    numeric_cols = ['Entropy', 'GC.Content', 'AT.Content', 'Sequence.Length', 
-                    'N.Content', 'N.Percentage']
-    stats = df[numeric_cols].describe()
-    return stats
-
-def generate_trimmer_stats(df):
-    trimmer_stats = df.groupby('Trimmer').agg(
-        Mean_Length=('Sequence.Length', 'mean'),
-        Mean_GC=('GC.Content', 'mean'),
-        Mean_Entropy=('Entropy', 'mean'),
-        Mean_N_Percent=('N.Percentage', 'mean'),
-        Sequences_Count=('Sequence.Length', 'count')
-    ).round(2)
-    
-    return trimmer_stats
-
-def setup_plotting_style():
-    sns.set(style="whitegrid")
-    plt.rcParams.update({
-        'figure.figsize': (12, 8),
-        'axes.titlesize': 14,
-        'axes.labelsize': 12,
-        'xtick.labelsize': 10,
-        'ytick.labelsize': 10,
-        'legend.title_fontsize': 12,
-        'legend.fontsize': 10
-    })
-
-def save_plot(plot, filename, output_dir):
-    filepath = os.path.join(output_dir, f"{filename}.png")
-    plot.figure.savefig(filepath, dpi=600)
-    plt.close(plot.figure)
-
-def plot_length_distribution(df, output_dir):
-    plt.figure()
-    sns.violinplot(y='Sequence.Length', data=df, inner=None, color="lightgray")
-    sns.boxplot(y='Sequence.Length', data=df, whis=np.inf, color="white")
-    plt.axhline(df['Sequence.Length'].mean(), color='red', linestyle='dashed')
-    plt.axhline(df['Sequence.Length'].median(), color='blue', linestyle='dashed')
-    plt.title("Sequence Length Distribution")
-    plt.ylabel("Length (bp)")
-    save_plot(plt, "length_distribution", output_dir)
-
-def plot_gc_content(df, output_dir):
-    plt.figure()
-    sns.histplot(df['GC.Content'], kde=True, color="lightblue")
-    plt.axvline(50, color='red', linestyle='dashed')
-    plt.axvline(df['GC.Content'].mean(), color='green', linestyle='solid')
-    plt.title("GC Content Distribution")
-    plt.xlabel("GC Content (%)")
-    save_plot(plt, "gc_content_distribution", output_dir)
-
-def plot_dimensionality_reduction(df, output_dir):
-    features = ['Entropy', 'GC.Content', 'AT.Content', 'Sequence.Length', 'N.Percentage']
-    X = StandardScaler().fit_transform(df[features])
-    
-    pca = PCA(n_components=2)
-    pca_result = pca.fit_transform(X)
-    df['PC1'] = pca_result[:, 0]
-    df['PC2'] = pca_result[:, 1]
-    
-    plt.figure()
-    sns.scatterplot(x='PC1', y='PC2', hue='Trimmer', data=df, alpha=0.6)
-    plt.title("PCA of Trimming Results")
-    save_plot(plt, "pca_trimming_results", output_dir)
-    
-    tsne = TSNE(n_components=2, perplexity=30)
-    tsne_result = tsne.fit_transform(X)
-    df['TSNE1'] = tsne_result[:, 0]
-    df['TSNE2'] = tsne_result[:, 1]
-    
-    plt.figure()
-    sns.scatterplot(x='TSNE1', y='TSNE2', hue='Trimmer', data=df, alpha=0.6)
-    plt.title("t-SNE of Trimming Results")
-    save_plot(plt, "tsne_trimming_results", output_dir)
-
-def generate_html_report(stats, trimmer_stats, output_dir):
-    html_content = f'''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Trimmer Comparison Report</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-            table {{ border-collapse: collapse; width: 100%; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; }}
-            th {{ background-color: #f2f2f2; }}
-        </style>
-    </head>
-    <body>
-        <h1>Trimmer Comparison Report</h1>
-        <h2>Overall Statistics</h2>
-        {stats.to_html()}
-        <h2>Trimmer Statistics</h2>
-        {trimmer_stats.to_html()}
-        <div class="plots">
-            <h2>Analysis Plots</h2>
-            <img src="length_distribution.png" alt="Length Distribution">
-            <img src="gc_content_distribution.png" alt="GC Content Distribution">
-            <img src="pca_trimming_results.png" alt="PCA of Trimming Results">
-            <img src="tsne_trimming_results.png" alt="t-SNE of Trimming Results">
-        </div>
-    </body>
-    </html>
-    '''
-    
-    with open(os.path.join(output_dir, "trimmer_comparison_report.html"), 'w') as f:
-        f.write(html_content)
+            <h2>Metric Distributions</h2>
+            {% for plot in plot_files %}
+            <div class="plot">
+                <img src="{{ plot }}" alt="Distribution Plot">
+            </div>
+            {% endfor %}
+            
+            <h2>Base Composition</h2>
+            <div class="plot">
+                <img src="{{ base_plot }}" alt="Base Composition">
+            </div>
+            
+            <h2>Statistical Analysis</h2>
+            <table>
+                <tr>
+                    <th>Metric</th>
+                    <th>H-statistic</th>
+                    <th>p-value</th>
+                    <th>Significant Difference</th>
+                </tr>
+                {% for metric, results in stat_results.items() %}
+                <tr>
+                    <td>{{ metric }}</td>
+                    <td>{{ "%.4f"|format(results.h_statistic) }}</td>
+                    <td>{{ "%.4f"|format(results.p_value) }}</td>
+                    <td>{{ "Yes" if results.significant else "No" }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </body>
+        </html>
+        """
+        
+        # Render template
+        template = Template(template_str)
+        html_content = template.render(
+            summary_stats=summary_stats,
+            plot_files=[os.path.basename(p) for p in plot_files],
+            base_plot=os.path.basename(base_plot),
+            stat_results=stat_results
+        )
+        
+        # Save HTML report
+        report_path = os.path.join(self.output_dir, 'quality_report.html')
+        with open(report_path, 'w') as f:
+            f.write(html_content)
+        
+        return report_path
 
 def main():
-    # Create output directory
-    output_dir = 'quality_reports'
-    os.makedirs(output_dir, exist_ok=True)
+    # Create report
+    report = QualityReport('read_metrics.csv')
     
-    try:
-        # Load and process data with improved error handling
-        df = load_and_clean_data("read_metrics.csv")
-        
-        if len(df) == 0:
-            raise ValueError("No valid data rows after processing")
-        
-        # Generate statistics and plots
-        stats = generate_basic_stats(df)
-        trimmer_stats = generate_trimmer_stats(df)
-        
-        # Setup plotting
-        setup_plotting_style()
-        
-        # Generate plots
-        plot_length_distribution(df, output_dir)
-        plot_gc_content(df, output_dir)
-        plot_dimensionality_reduction(df, output_dir)
-        
-        # Generate HTML report
-        generate_html_report(stats, trimmer_stats, output_dir)
-        print(f"Report generated successfully in {output_dir}/trimmer_comparison_report.html")
-        
-    except Exception as e:
-        print(f"Error generating report: {str(e)}")
-        raise
+    # Generate report
+    report_path = report.generate_html_report()
+    print(f"Report generated: {report_path}")
 
 if __name__ == "__main__":
     main()
